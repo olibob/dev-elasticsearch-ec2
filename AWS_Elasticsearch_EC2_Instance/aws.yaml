@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create EC2 instance in default VPC on Root accoount
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Network
+      Parameters:
+      - VPCId
+      - VPCSubnet
+    - Label:
+        default: Security
+      Parameters:
+      - SSHAccessCIDR
+      - HTTPAccessCIDR
+      - KeyPairName
+    - Label:
+        default: Instance
+      Parameters:
+      - InstanceAMI
+      - ElsInstanceType
+      
+Parameters:
+  VPCId:
+    ConstraintDescription: Must be a valid VPC ID
+    Description: "The VPC ID to use"
+    Type: "AWS::EC2::VPC::Id"
+  VPCSubnet:
+    ConstraintDescription: Must be a valid VPC subnet
+    Description: "The VPC subnet to use"
+    Type: "AWS::EC2::Subnet::Id"
+  SSHAccessCIDR:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid IP range in x.x.x.x/x notation
+    Description: 'The CIDR IP range that is permitted to access the instance via SSH.
+      Note: a value of 0.0.0.0/0 will allow access from ANY ip address'
+    Type: String
+  HTTPAccessCIDR:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid IP range in x.x.x.x/x notation
+    Description: 'The CIDR IP range that is permitted to access the instance via HTTP/HTTPS.
+      Note: a value of 0.0.0.0/0 will allow access from ANY ip address'
+    Type: String
+  KeyPairName: 
+    Description: Amazon EC2 Key Pair
+    Type: "AWS::EC2::KeyPair::KeyName"
+    ConstraintDescription: must be a valid Key Pair
+  InstanceAMI:
+    Description: AMI ID for EC2 Instance
+    Type : String
+    Default: ami-6e28b517
+  ElsInstanceType:
+    AllowedValues:
+    - t2.micro
+    - t2.small
+    - t2.medium
+    - t2.large
+    - m4.large
+    - m4.xlarge
+    - m4.2xlarge
+    - m4.4xlarge
+    - m4.10xlarge
+    - m3.medium
+    - m3.large
+    - m3.xlarge
+    - m3.2xlarge
+    - c4.large
+    - c4.xlarge
+    - c4.2xlarge
+    - c4.4xlarge
+    - c4.8xlarge
+    - c3.large
+    - c3.xlarge
+    - c3.2xlarge
+    - c3.4xlarge
+    - c3.8xlarge
+    - r3.large
+    - r3.xlarge
+    - r3.2xlarge
+    - r3.4xlarge
+    - r3.8xlarge
+    - i2.xlarge
+    - i2.2xlarge
+    - i2.4xlarge
+    - i2.8xlarge
+    ConstraintDescription: Choose an instance type.
+    Default: t2.medium
+    Description: Elasticsearch Server node instance type
+    Type: String
+
+Resources:
+  CloudwatchLogRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "ec2.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+
+  CloudwatchLogPolicy:
+    Type: AWS::IAM::Policy 
+    Properties:
+      PolicyName: CloudwatchLoggingAllow
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:DescribeLogStreams
+            Resource: "arn:aws:logs:*:*:*"
+      Roles: 
+        - !Ref CloudwatchLogRole
+
+  ElsDevInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+      - !Ref CloudwatchLogRole
+
+  ElsDevSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref VPCId
+      GroupDescription: Enable Elasticsearch access
+      SecurityGroupIngress:
+        - IpProtocol: 'tcp'
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: !Ref HTTPAccessCIDR
+        - IpProtocol: 'tcp'
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: !Ref HTTPAccessCIDR
+        - IpProtocol: 'tcp'
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: !Ref SSHAccessCIDR
+      Tags:
+        - Key: Name
+          Value: ElsDevSG
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties: 
+      IamInstanceProfile: !Ref ElsDevInstanceProfile
+      ImageId: !Ref InstanceAMI
+      InstanceType: !Ref ElsInstanceType
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref VPCSubnet
+      SecurityGroupIds: 
+        - !Ref ElsDevSG
+      Tags:
+        - Key: Name
+          Value: Elasticsearch7.2.0
+
+Outputs:
+  ElasticsearchDevDNS:
+    Description: Elasticsearch Dev DNS
+    Value: !GetAtt EC2Instance.PublicDnsName
+  ElasticsearchDevIP:
+    Description: Elasticsearch Dev IP
+    Value: !GetAtt EC2Instance.PublicIp

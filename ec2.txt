@@ -1,0 +1,2 @@
+[els]
+ec2-34-240-231-239.eu-west-1.compute.amazonaws.com ansible_ssh_user=centos

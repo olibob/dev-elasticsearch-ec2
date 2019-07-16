@@ -1,0 +1,165 @@
+---
+- hosts: els
+  remote_user: centos
+  become: yes
+  become_method: sudo
+  vars:
+    elasticversion: 7.2.0-1 # currently available: 7.0.1-1, 7.1.0-1, 7.1.1-1, 7.2.0-1 on Centos 7
+    basicAuthUsername: "user"
+    basicAuthPassword: "password"
+    awsRegion: eu-west-1
+  tasks:
+    - name: Enable epel repo
+      yum:
+        name: epel-release
+        state: present
+    - name: Upgrade all packages
+      yum:
+        name: '*'
+        state: latest
+    - name: Install nginx
+      yum:
+        name: nginx
+        state: present
+    - name: Install httpd-tools
+      yum:
+        name: httpd-tools
+        state: present
+    - name: Install vim
+      yum:
+        name: vim
+        state: present
+    - name: Import Elastic RPM key
+      rpm_key:
+        state: present
+        key: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+    - name: Copy ELS repo file
+      copy:
+        src: elasticsearch/elasticsearch.repo
+        dest: /etc/yum.repos.d/
+        owner: root
+        group: root
+        mode: 0644
+    - name: Install elasticsearch
+      yum:
+        name: "elasticsearch-{{ elasticversion }}"
+        state: present
+    - name: Install kibana
+      yum:
+        name: "kibana-{{ elasticversion }}"
+        state: present
+    - name: Copy ELS config file
+      copy:
+        src: elasticsearch/elasticsearch.yml
+        dest: /etc/elasticsearch/
+        owner: root
+        group: root
+        mode: 0644
+    - name: Copy Kibana config file
+      copy:
+        src: elasticsearch/kibana.yml
+        dest: /etc/elasticsearch/
+        owner: root
+        group: root
+        mode: 0644
+    - name: Copy Nginx config file
+      copy:
+        src: elasticsearch/nginx.conf
+        dest: /etc/nginx/
+        owner: root
+        group: root
+        mode: 0644
+    - name: Copy Nginx els vhost file
+      copy:
+        src: elasticsearch/els.conf
+        dest: /etc/nginx/conf.d/
+        owner: root
+        group: root
+        mode: 0644
+    - name: Copy Nginx kibana vhost file
+      copy:
+        src: elasticsearch/kibana.conf
+        dest: /etc/nginx/conf.d/
+        owner: root
+        group: root
+        mode: 0644
+    - name: Install pip
+      yum:
+        name: python2-pip
+        state: present
+    - name: Install python-passlib (htpassw dependency)
+      pip:
+        name: passlib
+    - name: Create htpasswd file
+      htpasswd:
+        path: /etc/nginx/htpasswd
+        name: "{{ basicAuthUsername }}"
+        password: "{{ basicAuthPassword }}"
+        owner: root
+        group: nginx
+        mode: 0640
+    - name: Create SSL folders
+      file:
+        path: /etc/pki/nginx/private
+        state: directory
+        mode: '0755'
+    - name: Copy SSL cert
+      copy:
+        src: sslcerts/ssl-bundle.crt
+        dest: /etc/pki/nginx/
+        owner: root
+        group: root
+        mode: 0644
+    - name: Copy SSL key
+      copy:
+        src: sslcerts/private.key.pem
+        dest: /etc/pki/nginx/private/
+        owner: root
+        group: root
+        mode: 0644
+    - name: Set httpd_can_network_connect flag on and keep it persistent across reboots
+      seboolean:
+        name: httpd_can_network_connect
+        state: yes
+        persistent: yes
+    - name: Make sure a nginx is running
+      systemd:
+        state: started
+        enabled: yes
+        name: nginx
+    - name: Make sure a kibana is running
+      systemd:
+        state: started
+        enabled: yes
+        name: kibana
+    - name: Make sure a elasticsearch is running
+      systemd:
+        state: started
+        enabled: yes
+        name: elasticsearch
+    - name: Download awslogs setup.py
+      get_url:
+        dest: /root/awslogs-agent-setup.py
+        group: root
+        owner: root
+        mode: 0600
+        url: https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/awslogs-agent-setup.py
+    - name: Upload awslogs.conf
+      copy:
+        src: elasticsearch/awslogs.conf
+        dest: /etc/awslogs.conf
+        owner: root
+        group: root
+        mode: 0644
+    - name: check if awslogs is installed
+      stat:
+        path: /var/awslogs
+      register: result
+    - name: Install awslogs
+      command: "python /root/awslogs-agent-setup.py --region {{ awsRegion }} --non-interactive --configfile=/etc/awslogs.conf"
+      when: result.stat.exists == false
+    - name: Avoid Elasticsearch update on system updates
+      lineinfile:
+        path: /etc/yum.conf
+        regexp: '^exclude='
+        line: 'exclude=elasticsearch* kibana* '
